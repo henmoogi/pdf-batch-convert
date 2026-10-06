@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF 일괄 변환</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23cf222e' d='M6 2h8l6 6v14H6z'/%3E%3C/svg%3E">
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1f2328; --muted:#656d76; --line:#d0d7de; --accent:#1f6feb; --accent-soft:#e8f0fe; --ok:#1a7f37; --err:#cf222e; --warn:#9a6700; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --card:#161b22; --text:#e6edf3; --muted:#8d96a0; --line:#30363d; --accent:#4493f8; --accent-soft:#1b2a41; --ok:#3fb950; --err:#f85149; --warn:#d29922; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:"Malgun Gothic","맑은 고딕","Apple SD Gothic Neo","Noto Sans KR",sans-serif; font-size:15px; line-height:1.6; }
+  main { max-width:1100px; margin:0 auto; padding:32px 16px 56px; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  h2 { font-size:16px; margin:0 0 8px; }
+  .sub { color:var(--muted); margin:0 0 18px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-top:14px; }
+  button { font:inherit; font-size:14px; padding:6px 14px; border-radius:8px; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--text); }
+  button:hover { border-color:var(--accent); color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-size:15px; padding:9px 22px; }
+  button.primary:hover { filter:brightness(1.08); color:#fff; }
+  button:disabled { opacity:.45; cursor:default; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; }
+  .chip { padding:3px 10px; border-radius:12px; font-size:13px; border:1px solid var(--line); }
+  .chip.ok { color:var(--ok); border-color:var(--ok); }
+  .chip.no { color:var(--muted); }
+  .chip.warn { color:var(--warn); border-color:var(--warn); }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .path { font-family:Consolas,"Malgun Gothic",monospace; font-size:13px; color:var(--muted); word-break:break-all; }
+  .path b { color:var(--text); font-weight:600; }
+  label { display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
+  .opts label { display:flex; margin:4px 0; }
+  .hint { color:var(--muted); font-size:13px; }
+  .msg { color:var(--warn); font-size:14px; margin-top:6px; }
+  .err { color:var(--err); }
+  .start { margin-top:18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .bar { height:7px; background:var(--line); border-radius:4px; overflow:hidden; margin:10px 0 4px; }
+  .bar > div { height:100%; width:0; background:var(--accent); transition:width .25s; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:14px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  td.name { word-break:break-all; }
+  td.num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  td.st { white-space:nowrap; }
+  .st-완료 { color:var(--ok); } .st-실패 { color:var(--err); font-weight:600; } .st-건너뜀, .st-취소 { color:var(--muted); } .st-변환 { color:var(--accent); font-weight:600; }
+  .tablewrap { max-height:420px; overflow:auto; }
+  .hidden { display:none; }
+  details { margin-top:14px; }
+  summary { cursor:pointer; font-weight:600; }
+  details ul { margin:8px 0 4px; padding-left:20px; }
+  details li { margin:4px 0; }
+  footer { margin-top:22px; color:var(--muted); font-size:13px; }
+  footer p { margin:4px 0; }
+  .banner { background:#fff1d6; color:#7a5300; border:1px solid #e3c27a; border-radius:10px; padding:10px 14px; margin-top:14px; }
+  @media (prefers-color-scheme: dark) { .banner { background:#3d2e0a; color:#e3b341; border-color:#6b5317; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>PDF 일괄 변환</h1>
+  <p class="sub">한글·워드·파워포인트 문서를 PDF로 한 번에 바꿉니다. 이 PC에 설치된 한글·오피스로 변환하며, 파일은 PC 밖으로 나가지 않습니다.</p>
+  <div id="banner" class="banner hidden"></div>
+
+  <section class="card">
+    <h2>준비 상태</h2>
+    <div class="chips" id="chips"><span class="chip no">확인 중…</span></div>
+    <p class="hint" id="moduleHint" hidden>한글 문서를 변환할 때 '보안 승인' 창이 뜰 수 있습니다. 아래 '도움말'의 한글 보안 모듈 안내를 보세요.</p>
+  </section>
+
+  <section class="card">
+    <h2>① 변환할 폴더</h2>
+    <div class="row">
+      <button type="button" id="btnPick">폴더 고르기</button>
+      <label><input type="checkbox" id="chkRec"> 하위 폴더까지 포함</label>
+    </div>
+    <p class="path" id="inPath">아직 고르지 않음</p>
+    <div id="scanBox" class="hidden">
+      <div class="row"><b id="scanSum"></b><button type="button" id="btnList">목록 보기</button></div>
+      <div class="tablewrap hidden" id="listWrap"><table><thead><tr><th>파일</th><th>종류</th><th>크기</th></tr></thead><tbody id="listRows"></tbody></table></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>② 저장 위치</h2>
+    <div class="opts">
+      <label><input type="radio" name="out" value="downloads" checked> 다운로드 폴더 <span class="hint" id="dlHint">(실행할 때마다 'PDF변환_날짜_시각' 새 폴더에 모읍니다)</span></label>
+      <label><input type="radio" name="out" value="beside"> 원본 문서 옆</label>
+      <label><input type="radio" name="out" value="folder"> 다른 폴더 <button type="button" id="btnOut">고르기</button> <span class="path" id="outPath">아직 고르지 않음</span></label>
+      <label><input type="checkbox" id="chkOver"> 같은 이름의 PDF가 이미 있으면 덮어쓰기 <span class="hint">(끄면 건너뜀)</span></label>
+    </div>
+  </section>
+
+  <div class="start">
+    <button type="button" class="primary" id="btnStart" disabled>변환 시작</button>
+    <span class="hint" id="startHint">먼저 변환할 폴더를 고르세요.</span>
+  </div>
+  <div class="msg" id="msg" hidden></div>
+
+  <section class="card hidden" id="jobBox">
+    <div class="row">
+      <h2 style="margin:0;margin-right:auto" id="jobTitle">변환 중</h2>
+      <button type="button" id="btnStop">멈추기</button>
+      <button type="button" id="btnOpen" class="hidden">결과 폴더 열기</button>
+      <button type="button" id="btnRetry" class="hidden">실패한 것만 다시</button>
+    </div>
+    <div class="bar"><div id="barFill"></div></div>
+    <div class="hint" id="jobCounts"></div>
+    <div class="tablewrap"><table><thead><tr><th>파일</th><th>종류</th><th>상태</th><th>걸린 시간</th><th>메모</th></tr></thead><tbody id="jobRows"></tbody></table></div>
+  </section>
+
+  <details class="card">
+    <summary>도움말</summary>
+    <ul>
+      <li><b>변환 방식</b>: 한글 문서는 한글의 'PDF로 저장', 워드·파워포인트는 오피스의 'PDF/XPS 문서 만들기'로 바꿉니다. 원래 프로그램으로 저장하는 것과 같아 글꼴·표·그림이 그대로 유지됩니다.</li>
+      <li><b>필요한 프로그램</b>: 한글 문서는 한컴오피스 한글, 워드·파워포인트 문서는 마이크로소프트 오피스가 설치돼 있어야 합니다. 없는 종류는 실패로 표시됩니다.</li>
+      <li><b>한글 '보안 승인' 창</b>: 한글은 자동 변환 때 문서마다 '접근 허용' 창을 띄울 수 있습니다. 한컴이 배포하는 보안 모듈(FilePathCheckerModule)을 등록하면 뜨지 않습니다. 등록하지 않았다면 창이 뜰 때마다 [모두 허용]을 눌러 주세요.</li>
+      <li><b>'게시 중' 창</b>: 워드·파워포인트가 PDF를 만들 때 잠깐 뜨는 진행 창은 오피스 자체 동작입니다. 닫지 말고 그대로 두세요.</li>
+      <li><b>암호 문서·배포용 문서</b>: 암호가 걸린 문서는 열 수 없어 실패로 표시됩니다. 저장이 잠긴 한글 배포용 문서는 인쇄 방식으로 PDF를 만들어 봅니다.</li>
+      <li><b>이름이 같은 문서</b>: 같은 폴더의 '계약서.hwp'와 '계약서.docx'처럼 이름이 겹치면 '계약서_hwp.pdf', '계약서_docx.pdf'로 나눠 저장합니다.</li>
+      <li><b>오래 걸리는 파일</b>: 한 파일이 2분 넘게 응답이 없으면 실패로 표시하고 다음 파일로 넘어갑니다. 끝난 뒤 [실패한 것만 다시]를 눌러 보세요.</li>
+      <li>변환 중에는 이 화면을 닫지 마세요. 화면을 닫아도 도우미는 30분 동안 쓰지 않으면 저절로 꺼집니다.</li>
+    </ul>
+  </details>
+
+  <footer>
+    <p>PDF 일괄 변환 · 버전 <span id="ver">-</span> · 제작: 해무기(henmoogi) · 무료(MIT 라이선스) · 새 버전과 소스: <a href="https://github.com/henmoogi/pdf-batch-convert">github.com/henmoogi/pdf-batch-convert</a></p>
+    <p>개인이 만든 비공식 도구로 한글과컴퓨터·마이크로소프트와 관계가 없습니다. 원본 문서는 읽기만 하고 고치지 않습니다. 변환 결과는 사용자가 확인해 주세요. 사용 결과에 대한 책임은 사용자에게 있습니다.</p>
+  </footer>
+</main>
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const KIND = { hwp: "한글", word: "워드", ppt: "파워포인트" };
+  const qs = new URLSearchParams(location.search);
+  let token = qs.get("t") || sessionStorage.getItem("pdfconv.t") || "";
+  if (qs.get("t")) { sessionStorage.setItem("pdfconv.t", token); history.replaceState(null, "", "/"); }
+  let inFolder = "", outFolder = "", scanned = [], polling = null, lastOutDir = "";
+
+  async function api(path, body) {
+    let r;
+    try {
+      r = await fetch("/api/" + path, { method: "POST", headers: { "Content-Type": "application/json", "X-Token": token }, body: JSON.stringify(body || {}) });
+    } catch (e) {
+      banner("도우미와 연결이 끊겼습니다. 실행 아이콘(01 PDF변환_실행)으로 다시 열어 주세요.");
+      throw e;
+    }
+    const j = await r.json().catch(() => ({ ok: false, error: "응답을 읽지 못했습니다." }));
+    if (r.status === 403 && j.error === "FORBIDDEN") banner("접속 확인에 실패했습니다. 실행 아이콘(01 PDF변환_실행)으로 다시 열어 주세요.");
+    return j;
+  }
+  function banner(t) { $("banner").textContent = t; $("banner").classList.remove("hidden"); }
+  function say(t, bad) { const m = $("msg"); m.textContent = t || ""; m.hidden = !t; m.classList.toggle("err", !!bad); }
+  const fmtSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  async function health() {
+    const h = await api("health");
+    if (!h.ok) return;
+    $("ver").textContent = h.version;
+    const chip = (ok, name) => `<span class="chip ${ok ? "ok" : "no"}">${ok ? "✔" : "✖"} ${name}</span>`;
+    $("chips").innerHTML = chip(h.apps.hwp, "한글") + chip(h.apps.word, "워드") + chip(h.apps.ppt, "파워포인트") +
+      (h.apps.hwp ? `<span class="chip ${h.hwpModule ? "ok" : "warn"}">${h.hwpModule ? "✔ 한글 보안 모듈 등록됨" : "! 한글 보안 모듈 없음"}</span>` : "");
+    $("moduleHint").hidden = !h.apps.hwp || h.hwpModule;
+    $("dlHint").textContent = `(${h.downloads} 안에 실행할 때마다 'PDF변환_날짜_시각' 새 폴더를 만들어 모읍니다)`;
+    if (h.running) { $("jobBox").classList.remove("hidden"); poll(); }
+  }
+
+  async function scan() {
+    if (!inFolder) return;
+    say("");
+    const r = await api("scan", { folder: inFolder, recursive: $("chkRec").checked });
+    if (!r.ok) { say(r.error, true); return; }
+    scanned = r.files || [];
+    const c = { hwp: 0, word: 0, ppt: 0 };
+    scanned.forEach((f) => c[f.kind]++);
+    $("scanBox").classList.remove("hidden");
+    $("scanSum").textContent = scanned.length
+      ? `총 ${scanned.length}개 - 한글 ${c.hwp} · 워드 ${c.word} · 파워포인트 ${c.ppt}`
+      : "변환할 문서(한글·워드·파워포인트)가 없습니다." + ($("chkRec").checked ? "" : " 하위 폴더에 있다면 '하위 폴더까지 포함'을 체크하세요.");
+    $("listRows").innerHTML = scanned.slice(0, 1000).map((f) => `<tr><td class="name">${esc(f.rel)}</td><td>${KIND[f.kind]}</td><td class="num">${fmtSize(f.size)}</td></tr>`).join("");
+    $("btnList").hidden = !scanned.length;
+    refreshStart();
+  }
+  function outMode() { return document.querySelector("input[name=out]:checked").value; }
+  function refreshStart() {
+    let hint = "";
+    if (!inFolder) hint = "먼저 변환할 폴더를 고르세요.";
+    else if (!scanned.length) hint = "변환할 문서가 없습니다.";
+    else if (outMode() === "folder" && !outFolder) hint = "저장할 폴더를 고르세요.";
+    $("btnStart").disabled = !!hint;
+    $("startHint").textContent = hint || `${scanned.length}개 문서를 PDF로 바꿉니다.`;
+  }
+
+  $("btnPick").onclick = async () => {
+    say("폴더 선택 창이 열렸습니다. 다른 창 뒤에 가려져 있으면 작업 표시줄에서 찾아 주세요.");
+    const r = await api("pick", { purpose: "input", start: inFolder });
+    say("");
+    if (r.ok && r.path) { inFolder = r.path; $("inPath").innerHTML = "<b>" + esc(r.path) + "</b>"; scan(); }
+  };
+  $("btnOut").onclick = async () => {
+    say("폴더 선택 창이 열렸습니다.");
+    const r = await api("pick", { purpose: "output", start: outFolder });
+    say("");
+    if (r.ok && r.path) { outFolder = r.path; $("outPath").innerHTML = "<b>" + esc(r.path) + "</b>"; document.querySelector("input[value=folder]").checked = true; }
+    refreshStart();
+  };
+  $("chkRec").onchange = scan;
+  document.querySelectorAll("input[name=out]").forEach((el) => el.onchange = refreshStart);
+  $("btnList").onclick = () => $("listWrap").classList.toggle("hidden");
+
+  async function start(retry) {
+    say("");
+    const body = retry ? { retry: true } : { folder: inFolder, recursive: $("chkRec").checked, outMode: outMode(), outFolder, overwrite: $("chkOver").checked };
+    const r = await api("start", body);
+    if (!r.ok) { say(r.error, true); return; }
+    lastOutDir = r.outDir || "";
+    $("jobBox").classList.remove("hidden");
+    $("jobBox").scrollIntoView({ behavior: "smooth", block: "start" });
+    poll();
+  }
+  $("btnStart").onclick = () => start(false);
+  $("btnRetry").onclick = () => start(true);
+  $("btnStop").onclick = async () => { await api("stop"); $("btnStop").disabled = true; $("jobTitle").textContent = "멈추는 중(지금 파일까지 마치고 멈춥니다)"; };
+  $("btnOpen").onclick = async () => {
+    const r = await api("open", { path: lastOutDir || inFolder });
+    if (!r.ok) say(r.error, true);
+  };
+
+  function poll() {
+    clearTimeout(polling);
+    api("job").then((r) => {
+      if (!r.ok || !r.job || r.job.state === "none") return;
+      render(r.job);
+      if (r.job.state === "running") polling = setTimeout(poll, 700);
+    }).catch(() => {});
+  }
+  function render(j) {
+    const c = j.counts || {};
+    const done = (c["완료"] || 0) + (c["실패"] || 0) + (c["건너뜀"] || 0) + (c["취소"] || 0);
+    $("barFill").style.width = (j.total ? Math.round(done / j.total * 100) : 0) + "%";
+    $("jobCounts").textContent = `완료 ${c["완료"] || 0} · 실패 ${c["실패"] || 0} · 건너뜀 ${c["건너뜀"] || 0}` +
+      (c["취소"] ? ` · 취소 ${c["취소"]}` : "") + ` · 남음 ${(c["대기"] || 0) + (c["변환 중"] || 0)} (전체 ${j.total})` +
+      (j.outDir ? ` · 저장 위치: ${j.outDir}` : " · 저장 위치: 원본 문서 옆");
+    lastOutDir = j.outDir || lastOutDir;
+    const running = j.state === "running";
+    $("jobTitle").textContent = running ? "변환 중" : (j.state === "stopped" ? "멈춤" : "변환 끝");
+    $("btnStop").classList.toggle("hidden", !running); $("btnStop").disabled = false;
+    $("btnOpen").classList.toggle("hidden", running);
+    $("btnRetry").classList.toggle("hidden", running || !((c["실패"] || 0) + (c["취소"] || 0)));
+    $("btnStart").disabled = running || $("btnStart").disabled;
+    $("jobRows").innerHTML = j.items.map((it) => {
+      const cls = it.status === "변환 중" ? "st-변환" : "st-" + it.status;
+      return `<tr><td class="name">${esc(it.rel)}</td><td>${KIND[it.kind]}</td><td class="st ${cls}">${esc(it.status)}</td>` +
+        `<td class="num">${it.sec != null ? it.sec + "초" : ""}</td><td>${esc(it.msg)}</td></tr>`;
+    }).join("");
+    if (!running) { refreshStart(); if (j.error) say("작업 중 오류: " + j.error, true); }
+  }
+
+  // 자동 시험용: 폴더 선택 창 없이 폴더를 넣는다(도우미가 -Allow로 미리 허용한 폴더만 통과)
+  window.__pdfconvTest = {
+    setIn: (p) => { inFolder = p; $("inPath").innerHTML = "<b>" + esc(p) + "</b>"; return scan(); },
+    setOut: (p) => { outFolder = p; $("outPath").innerHTML = "<b>" + esc(p) + "</b>"; refreshStart(); },
+  };
+  if (!token) banner("이 화면은 실행 아이콘(01 PDF변환_실행)으로 열어야 합니다.");
+  else health().catch(() => {});
+})();
+</script>
+</body>
+</html>
