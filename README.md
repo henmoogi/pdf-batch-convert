@@ -2,6 +2,8 @@
 
 폴더 하나를 고르면 그 안의 **한글(HWP·HWPX)·워드(DOC·DOCX)·파워포인트(PPT·PPTX)** 문서를 PDF로 한꺼번에 바꿉니다. Windows 전용입니다.
 
+📝 소개 글(사용법·화면): [네이버 블로그](https://blog.naver.com/henmoogi/224433484856) · 문의·후기는 블로그 댓글로
+
 👉 **내려받기: [pdf-batch-convert_v2026.10.06.zip](https://github.com/henmoogi/pdf-batch-convert/releases/latest/download/pdf-batch-convert_v2026.10.06.zip)** ([릴리스](https://github.com/henmoogi/pdf-batch-convert/releases/latest))
 
 - 이 PC에 설치된 **한글과 오피스로 직접 변환**합니다. 원래 프로그램에서 'PDF로 저장'하는 것과 같아 글꼴·표·그림이 그대로 유지됩니다.
