@@ -187,11 +187,23 @@ $WORKER = {
         $opened = $app.Open($src, '', 'lock:false;forceopen:true;versionwarning:false;')
         if (-not $opened) { throw '문서를 열지 못했습니다(암호가 걸렸거나 손상된 문서일 수 있습니다).' }
         try {
-            $pset = $app.HParameterSet.HFileOpenSave
-            [void]$app.HAction.GetDefault('FileSaveAsPdf', $pset.HSet)
-            $pset.filename = $dst; $pset.Format = 'PDF'; $pset.Attributes = 0
-            $ok = $app.HAction.Execute('FileSaveAsPdf', $pset.HSet)
-            if (-not $ok -or -not (Test-Path -LiteralPath $dst)) { try { [void]$app.SaveAs($dst, 'PDF', '') } catch {} }
+            # 1순위: 'PDF로 인쇄'(한글 자체 Hancom PDF)에 인쇄 방식을 '보통(0)'으로 지정한다.
+            #   문서에 '2쪽 모아 찍기' 같은 인쇄 설정이 저장돼 있으면 'PDF로 저장'은 그 설정을 따라 쪽을 0.707배로 줄여 버린다.
+            #   인쇄 경로라 저장이 잠긴 배포용 문서도 이 방법으로 된다.
+            try {
+                $pp = $app.HParameterSet.HPrint
+                [void]$app.HAction.GetDefault('PrintToPDF', $pp.HSet)
+                $pp.PrintMethod = 0; $pp.ZoomX = 100; $pp.ZoomY = 100; $pp.Range = 0; $pp.NumCopy = 1; $pp.filename = $dst
+                if ($app.HAction.Execute('PrintToPDF', $pp.HSet)) { [void](Wait-Stable $dst 60) }
+            } catch {}
+            # 2순위: 'PDF로 저장' 동작, 3순위: SaveAs
+            if (-not (Test-Path -LiteralPath $dst)) {
+                $pset = $app.HParameterSet.HFileOpenSave
+                [void]$app.HAction.GetDefault('FileSaveAsPdf', $pset.HSet)
+                $pset.filename = $dst; $pset.Format = 'PDF'; $pset.Attributes = 0
+                $ok = $app.HAction.Execute('FileSaveAsPdf', $pset.HSet)
+                if (-not $ok -or -not (Test-Path -LiteralPath $dst)) { try { [void]$app.SaveAs($dst, 'PDF', '') } catch {} }
+            }
             if (-not (Test-Path -LiteralPath $dst)) {
                 # 배포용 문서(저장 잠금, 인쇄만 허용)는 인쇄 방식 PDF로 우회. 별도 변환기가 비동기로 쓰므로 완성될 때까지 기다린다
                 try {
