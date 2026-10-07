@@ -1,8 +1,10 @@
 ﻿# PDF 일괄 변환 도우미 (Windows PowerShell 5.1) - 파이썬 설치 없이 윈도우 내장 PowerShell만으로 동작
 # 한글(HWP/HWPX)·워드(DOC/DOCX)·파워포인트(PPT/PPTX)를 각 프로그램의 자동화 기능으로 PDF로 바꾼다.
 # 화면(PDF변환.html)도 이 도우미가 http://127.0.0.1:<포트>/ 에서 직접 제공한다(이 PC 밖에서는 접속 불가).
-# 보안: 실행할 때마다 만드는 일회용 비밀번호(X-Token)와 출처(Origin) 확인, 사용자가 폴더 선택 창으로 고른 폴더와
-#       다운로드 폴더 안에서만 읽고 쓴다. 원본은 읽기 전용으로 열고, 파일을 지우는 기능은 없다.
+# 보안: 실행할 때마다 만드는 일회용 비밀번호(X-Token)와 출처(Origin) 확인. 사용자가 선택 창으로 고른 폴더·파일과
+#       다운로드 폴더 안에서만 읽고 쓴다. 원본은 읽기 전용으로 열고 고치거나 지우지 않는다.
+#       화면에 끌어다 놓은 파일은 브라우저가 원래 위치를 알려 주지 않으므로, 도우미 전용 임시 폴더
+#       (%LOCALAPPDATA%\PDF변환\받은파일)에 사본을 받아 변환하고, 도우미가 꺼질 때 그 사본만 지운다.
 # 실행: powershell -NoProfile -ExecutionPolicy Bypass -STA -File PDF변환_도우미.ps1   (보통은 PDF변환_시작.ps1이 띄운다)
 # 제작: 해무기(henmoogi), 2026 · MIT License
 [CmdletBinding(PositionalBinding = $false)]
@@ -10,17 +12,20 @@ param([int]$Port = 43141, [int]$IdleMinutes = 30, [int]$TimeoutSec = 120, [strin
 $ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms
-$VERSION = '2026.10.06'
+$VERSION = '2026.10.07'
 $HERE = Split-Path -Parent $MyInvocation.MyCommand.Path
 $HTML = Join-Path $HERE 'PDF변환.html'
 $SESS_DIR = Join-Path $env:LOCALAPPDATA 'PDF변환'
 $SESS_FILE = Join-Path $SESS_DIR 'session.json'
+$STAGE_ROOT = Join-Path $SESS_DIR '받은파일'
+$STAGE = Join-Path $STAGE_ROOT ([string]$PID)   # 끌어다 놓은 파일의 사본(이 도우미 전용, 꺼질 때 지움)
 $TOKEN = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
 $DOWNLOADS = (New-Object -ComObject Shell.Application).Namespace('shell:Downloads').Self.Path
 $EXT = @{ '.hwp' = 'hwp'; '.hwpx' = 'hwp'; '.doc' = 'word'; '.docx' = 'word'; '.ppt' = 'ppt'; '.pptx' = 'ppt' }
 
 # 작업 스레드와 나눠 쓰는 상태
-$S = [hashtable]::Synchronized(@{ allowed = (New-Object System.Collections.ArrayList); job = $null; lastJob = $null; stop = $false;
+$S = [hashtable]::Synchronized(@{ allowed = (New-Object System.Collections.ArrayList); allowedFiles = (New-Object System.Collections.ArrayList);
+        job = $null; lastJob = $null; stop = $false; lastDir = '';
         itemStarted = $null; enginePid = 0; timedOut = $false; creating = $null; closeStarted = $null; last = Get-Date })
 
 function Send-Json($ctx, $obj, [int]$status = 200) {
@@ -47,30 +52,67 @@ function Get-Q($req, [string]$name) {
     return ''
 }
 function Norm([string]$p) { return [IO.Path]::GetFullPath($p).TrimEnd('\') }
-function Test-Allowed([string]$p) {
+function Is-Under([string]$full, [string]$root) {
+    $r = Norm $root
+    return ($full -ieq $r -or $full.StartsWith($r + '\', [StringComparison]::OrdinalIgnoreCase))
+}
+function Test-Allowed([string]$p) {   # 고른 폴더와 다운로드 폴더(저장 위치·폴더 목록용)
     if (-not $p) { return $false }
     try { $full = Norm $p } catch { return $false }
-    foreach ($root in @($S.allowed) + @($DOWNLOADS)) {
-        $r = Norm $root
-        if ($full -ieq $r -or $full.StartsWith($r + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
-    }
+    foreach ($root in @($S.allowed) + @($DOWNLOADS)) { if (Is-Under $full $root) { return $true } }
     return $false
 }
-function Pick-Folder([string]$desc, [string]$start) {
+function Test-Source([string]$p) {    # 변환할 문서: 고른 폴더 안, 하나씩 고른 파일, 끌어다 놓아 받은 사본만
+    if (-not $p) { return $false }
+    try { $full = Norm $p } catch { return $false }
+    if (Is-Under $full $STAGE) { return $true }
+    foreach ($f in @($S.allowedFiles)) { if ($full -ieq $f) { return $true } }
+    foreach ($root in @($S.allowed)) { if (Is-Under $full $root) { return $true } }
+    return $false
+}
+function Is-Doc([string]$name) { return ($EXT.ContainsKey([IO.Path]::GetExtension($name).ToLower()) -and -not ([IO.Path]::GetFileName($name)).StartsWith('~$')) }
+# 화면이 보낸 상대 경로를 안전한 폴더\파일 이름으로(.. 와 드라이브 문자, 쓸 수 없는 글자를 걸러 저장 위치 밖으로 못 나가게)
+$BADCH = [IO.Path]::GetInvalidFileNameChars()
+function Safe-Rel([string]$rel) {
+    $out = New-Object System.Collections.ArrayList
+    foreach ($part in ($rel -split '[\\/]+')) {
+        $q = -join @($part.ToCharArray() | ForEach-Object { if ($BADCH -contains $_) { '_' } else { $_ } })
+        $q = $q.Trim().TrimEnd('.')
+        if ($q -and $q -ne '..') { [void]$out.Add($q) }
+    }
+    return ($out -join '\')
+}
+function New-Owner {   # 선택 창이 다른 창 뒤에 숨지 않게 맨 앞에 뜨는 투명한 주인 창
     $owner = New-Object System.Windows.Forms.Form
     $owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.Opacity = 0; $owner.StartPosition = 'CenterScreen'
     $owner.Show(); $owner.Activate()
+    return $owner
+}
+function Pick-Folder([string]$desc, [string]$start) {
+    $owner = New-Owner
     $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
     $dlg.Description = $desc; $dlg.ShowNewFolderButton = $true
-    if ($start -and (Test-Path -LiteralPath $start)) { $dlg.SelectedPath = $start }
+    if ($start -and (Test-Path -LiteralPath $start)) { $dlg.SelectedPath = $start } elseif ($S.lastDir -and (Test-Path -LiteralPath $S.lastDir)) { $dlg.SelectedPath = $S.lastDir }
     $res = $dlg.ShowDialog($owner); $owner.Close(); $owner.Dispose()
-    if ($res -eq [System.Windows.Forms.DialogResult]::OK) { return $dlg.SelectedPath }
+    if ($res -eq [System.Windows.Forms.DialogResult]::OK) { $S.lastDir = $dlg.SelectedPath; return $dlg.SelectedPath }
     return $null
 }
+function Pick-Files {
+    $owner = New-Owner
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    $dlg.Title = '변환할 문서를 고르세요 (Ctrl이나 Shift를 누른 채 누르면 여러 개)'
+    $dlg.Filter = '한글·워드·파워포인트 문서|*.hwp;*.hwpx;*.doc;*.docx;*.ppt;*.pptx|모든 파일|*.*'
+    $dlg.Multiselect = $true
+    if ($S.lastDir -and (Test-Path -LiteralPath $S.lastDir)) { $dlg.InitialDirectory = $S.lastDir }
+    $res = $dlg.ShowDialog($owner); $owner.Close(); $owner.Dispose()
+    if ($res -eq [System.Windows.Forms.DialogResult]::OK -and $dlg.FileNames.Count) { $S.lastDir = Split-Path -Parent $dlg.FileNames[0]; return @($dlg.FileNames) }
+    return @()
+}
+function Clear-Stage { if (Test-Path -LiteralPath $STAGE) { Remove-Item -LiteralPath $STAGE -Recurse -Force -ErrorAction SilentlyContinue } }
 function Get-Targets([string]$folder, [bool]$rec) {
     $opt = @{ LiteralPath = $folder; File = $true; ErrorAction = 'SilentlyContinue' }
     if ($rec) { $opt.Recurse = $true }
-    @(Get-ChildItem @opt | Where-Object { $EXT.ContainsKey($_.Extension.ToLower()) -and -not $_.Name.StartsWith('~$') } | Sort-Object FullName)
+    @(Get-ChildItem @opt | Where-Object { Is-Doc $_.Name } | Sort-Object FullName)
 }
 function Get-Apps {
     @{ hwp = (Test-Path 'Registry::HKEY_CLASSES_ROOT\HWPFrame.HwpObject'); word = (Test-Path 'Registry::HKEY_CLASSES_ROOT\Word.Application');
@@ -81,33 +123,38 @@ function Get-HwpModule {
     return [bool]($v -and (Test-Path -LiteralPath $v))
 }
 
-# 변환할 목록 만들기: 저장 위치 계산, 같은 이름 충돌 구분, 이미 있는 PDF 건너뛰기
-function Plan-Items($folder, [bool]$rec, [string]$outMode, [string]$outFolder, [bool]$overwrite) {
-    $folder = Norm $folder
-    $files = Get-Targets $folder $rec
+# 변환할 목록 만들기: 화면 목록(원본 경로 + 목록에 보이는 상대 경로)으로 저장 위치 계산, 같은 이름 충돌 구분, 이미 있는 PDF 건너뛰기
+function Plan-Items($list, [string]$outMode, [string]$outFolder, [bool]$overwrite) {
     $outRoot = $null
     if ($outMode -eq 'downloads') {
         $base = Join-Path $DOWNLOADS ('PDF변환_' + (Get-Date -Format 'yyyyMMdd_HHmm')); $outRoot = $base; $n = 2
         while (Test-Path -LiteralPath $outRoot) { $outRoot = "$base`_$n"; $n++ }
     } elseif ($outMode -eq 'folder') { $outRoot = Norm $outFolder }
     $items = New-Object System.Collections.ArrayList
-    $i = 0
-    foreach ($f in $files) {
-        $rel = $f.FullName.Substring($folder.Length).TrimStart('\')
+    $seen = @{}
+    foreach ($x in $list) {
+        $src = Norm ([string]$x.path)
+        if ($seen.ContainsKey($src.ToLower())) { continue }
+        $seen[$src.ToLower()] = 1
+        $f = Get-Item -LiteralPath $src
+        $rel = Safe-Rel ([string]$x.rel); if (-not $rel) { $rel = $f.Name }
         $relDir = Split-Path -Parent $rel
         $dstDir = if ($outMode -eq 'beside') { $f.DirectoryName } elseif ($relDir) { Join-Path $outRoot $relDir } else { $outRoot }
-        [void]$items.Add(@{ i = $i; rel = $rel; src = $f.FullName; kind = $EXT[$f.Extension.ToLower()]; ext = $f.Extension.TrimStart('.').ToLower();
+        [void]$items.Add(@{ i = $items.Count; rel = $rel; src = $f.FullName; kind = $EXT[$f.Extension.ToLower()]; ext = $f.Extension.TrimStart('.').ToLower();
                 size = $f.Length; dstDir = $dstDir; base = [IO.Path]::GetFileNameWithoutExtension($f.Name); dst = ''; status = '대기'; msg = ''; sec = $null })
-        $i++
     }
-    # 같은 폴더에 이름만 같고 확장자가 다른 문서(계약서.hwp, 계약서.docx)는 PDF 이름 뒤에 _확장자를 붙여 구분
-    $groups = $items | Group-Object { ($_.dstDir + '\' + $_.base).ToLower() }
-    foreach ($g in $groups) {
-        foreach ($it in $g.Group) {
-            $name = if ($g.Count -gt 1) { "$($it.base)_$($it.ext).pdf" } else { "$($it.base).pdf" }
-            $it.dst = Join-Path $it.dstDir $name
-            if (-not $overwrite -and (Test-Path -LiteralPath $it.dst)) { $it.status = '건너뜀'; $it.msg = '같은 이름의 PDF가 이미 있습니다' }
-        }
+    # 같은 폴더에 이름만 같고 확장자가 다른 문서(계약서.hwp, 계약서.docx)는 PDF 이름 뒤에 _확장자를 붙여 구분하고,
+    # 그래도 겹치면(다른 곳에서 고른 같은 이름의 문서) _2, _3을 붙인다
+    $exts = @{}   # 같은 저장 위치·같은 이름에 확장자가 몇 종류인지
+    foreach ($it in $items) { $k = ($it.dstDir + '\' + $it.base).ToLower(); if (-not $exts[$k]) { $exts[$k] = @{} }; $exts[$k][$it.ext] = 1 }
+    $used = @{}
+    foreach ($it in $items) {
+        $stem = if ($exts[($it.dstDir + '\' + $it.base).ToLower()].Count -gt 1) { "$($it.base)_$($it.ext)" } else { $it.base }
+        $dst = Join-Path $it.dstDir "$stem.pdf"; $n = 2
+        while ($used.ContainsKey($dst.ToLower())) { $dst = Join-Path $it.dstDir "$stem`_$n.pdf"; $n++ }
+        $used[$dst.ToLower()] = 1
+        $it.dst = $dst
+        if (-not $overwrite -and (Test-Path -LiteralPath $it.dst)) { $it.status = '건너뜀'; $it.msg = '같은 이름의 PDF가 이미 있습니다' }
     }
     return @{ items = $items; outRoot = $outRoot }
 }
@@ -296,6 +343,10 @@ for ($p = $Port; $p -lt $Port + 10; $p++) {
 }
 if (-not $listener) { Write-Host '도우미가 쓸 포트를 열지 못했습니다.'; exit 1 }
 [void](New-Item -ItemType Directory -Force -Path $SESS_DIR)
+# 지난번 도우미가 강제로 꺼져 남은 사본 정리(지금 살아 있는 도우미의 것은 그대로)
+Get-ChildItem -LiteralPath $STAGE_ROOT -Directory -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -match '^\d+$' -and -not (Get-Process -Id ([int]$_.Name) -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq 'powershell' })
+} | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 [IO.File]::WriteAllText($SESS_FILE, (@{ port = $Port; token = $TOKEN; pid = $PID; version = $VERSION } | ConvertTo-Json -Compress), [Text.Encoding]::UTF8)
 $S.timeoutSec = $TimeoutSec
 foreach ($a in $Allow.Split(';')) { if ($a -and (Test-Path -LiteralPath $a)) { [void]$S.allowed.Add($a) } }
@@ -339,22 +390,52 @@ try {
             if (($reqOrigin -and $reqOrigin -ne $SELF_ORIGIN) -or $req.Headers['X-Token'] -ne $TOKEN -or $req.HttpMethod -ne 'POST') {
                 Send-Json $ctx @{ ok = $false; error = 'FORBIDDEN' } 403; continue
             }
-            $body = Read-Body $req
+            $body = if ($path -eq '/api/upload') { $null } else { Read-Body $req }   # 받은 파일 본문은 아래에서 바로 디스크로
             switch ($path) {
                 '/api/health' {
                     Send-Json $ctx @{ ok = $true; version = $VERSION; apps = (Get-Apps); hwpModule = (Get-HwpModule); downloads = $DOWNLOADS; running = (Job-Running) }
                 }
                 '/api/pick' {
+                    if ($body.purpose -ne 'output' -and $body.mode -eq 'files') {
+                        $files = @(); $skipped = 0
+                        foreach ($p in (Pick-Files)) {
+                            $f = Get-Item -LiteralPath $p -ErrorAction SilentlyContinue
+                            if ($f -and (Is-Doc $f.Name)) {
+                                [void]$S.allowedFiles.Add((Norm $f.FullName))
+                                $files += [ordered]@{ path = $f.FullName; name = $f.Name; kind = $EXT[$f.Extension.ToLower()]; size = $f.Length }
+                            } else { $skipped++ }
+                        }
+                        if ($files.Count -eq 0 -and $skipped -eq 0) { Send-Json $ctx @{ ok = $true; cancel = $true } } else { Send-Json $ctx @{ ok = $true; files = $files; skipped = $skipped } }
+                        break
+                    }
                     $desc = if ($body.purpose -eq 'output') { 'PDF를 저장할 폴더를 고르세요' } else { '변환할 문서(한글·워드·파워포인트)가 있는 폴더를 고르세요' }
                     $sel = Pick-Folder $desc $body.start
                     if ($sel) { [void]$S.allowed.Add($sel); Send-Json $ctx @{ ok = $true; path = $sel } } else { Send-Json $ctx @{ ok = $true; cancel = $true } }
                 }
                 '/api/scan' {
-                    if (-not (Test-Allowed $body.folder)) { Send-Json $ctx @{ ok = $false; error = '폴더 선택 창으로 고른 폴더만 쓸 수 있습니다.' } 403; break }
+                    if (-not (Test-Allowed $body.folder)) { Send-Json $ctx @{ ok = $false; error = '선택 창으로 고른 폴더만 쓸 수 있습니다.' } 403; break }
                     $files = Get-Targets (Norm $body.folder) ([bool]$body.recursive)
                     $root = Norm $body.folder
-                    $list = @(foreach ($f in $files) { [ordered]@{ rel = $f.FullName.Substring($root.Length).TrimStart('\'); kind = $EXT[$f.Extension.ToLower()]; size = $f.Length } })
+                    $list = @(foreach ($f in $files) { [ordered]@{ rel = $f.FullName.Substring($root.Length).TrimStart('\'); path = $f.FullName; kind = $EXT[$f.Extension.ToLower()]; size = $f.Length } })
                     Send-Json $ctx @{ ok = $true; files = $list }
+                }
+                '/api/upload' {
+                    # 화면에 끌어다 놓은 파일 하나를 받아 임시 폴더에 사본으로 저장(X-Rel: 놓은 폴더 기준 상대 경로, X-Group: 놓은 차례)
+                    $rel = Safe-Rel ([uri]::UnescapeDataString([string]$req.Headers['X-Rel']))
+                    $grp = [string]$req.Headers['X-Group']; if ($grp -notmatch '^\d{1,6}$') { $grp = '0' }
+                    if (-not $rel -or -not (Is-Doc $rel)) { Send-Json $ctx @{ ok = $false; error = '한글·워드·파워포인트 문서만 받을 수 있습니다.' } 400; break }
+                    if ($req.ContentLength64 -gt 2GB) { Send-Json $ctx @{ ok = $false; error = '2GB가 넘는 파일은 받을 수 없습니다.' } 413; break }
+                    $dst = Norm (Join-Path (Join-Path $STAGE $grp) $rel)
+                    if (-not (Is-Under $dst $STAGE)) { Send-Json $ctx @{ ok = $false; error = '파일 이름이 올바르지 않습니다.' } 400; break }
+                    [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst))
+                    $fs = [IO.File]::Create($dst)
+                    try { $req.InputStream.CopyTo($fs) } finally { $fs.Close() }
+                    Send-Json $ctx @{ ok = $true; path = $dst; size = (Get-Item -LiteralPath $dst).Length }
+                }
+                '/api/discard' {
+                    # 목록 비우기: 끌어다 놓아 받은 사본을 지운다(변환 중이면 그대로)
+                    if (Job-Running) { Send-Json $ctx @{ ok = $false; error = '변환 중에는 비울 수 없습니다.' } 409; break }
+                    Clear-Stage; $S.job = $null; Send-Json $ctx @{ ok = $true }
                 }
                 '/api/start' {
                     if (Job-Running) { Send-Json $ctx @{ ok = $false; error = '이미 변환 중입니다.' } 409; break }
@@ -366,11 +447,20 @@ try {
                         if ($items.Count -eq 0) { Send-Json $ctx @{ ok = $false; error = '실패한 파일이 없습니다.' } 400; break }
                         Begin-Job $items $prev.outDir; Send-Json $ctx @{ ok = $true; outDir = $prev.outDir; total = $items.Count }; break
                     }
-                    if (-not (Test-Allowed $body.folder)) { Send-Json $ctx @{ ok = $false; error = '폴더 선택 창으로 고른 폴더만 쓸 수 있습니다.' } 403; break }
                     $mode = [string]$body.outMode
                     if (@('downloads', 'beside', 'folder') -notcontains $mode) { $mode = 'downloads' }
                     if ($mode -eq 'folder' -and -not (Test-Allowed $body.outFolder)) { Send-Json $ctx @{ ok = $false; error = '저장 폴더를 폴더 선택 창으로 골라 주세요.' } 403; break }
-                    $plan = Plan-Items $body.folder ([bool]$body.recursive) $mode ([string]$body.outFolder) ([bool]$body.overwrite)
+                    $list = @($body.items | Where-Object { $_ })
+                    if ($list.Count -eq 0) { Send-Json $ctx @{ ok = $false; error = '변환할 문서가 없습니다.' } 400; break }
+                    $bad = $null; $staged = $false
+                    foreach ($x in $list) {
+                        $p = [string]$x.path
+                        if (-not (Test-Source $p) -or -not (Is-Doc $p) -or -not (Test-Path -LiteralPath $p -PathType Leaf)) { $bad = $p; break }
+                        if (Is-Under (Norm $p) $STAGE) { $staged = $true }
+                    }
+                    if ($bad) { Send-Json $ctx @{ ok = $false; error = ('쓸 수 없는 파일이 있습니다: ' + [IO.Path]::GetFileName($bad) + ' (목록을 비우고 다시 골라 주세요)') } 403; break }
+                    if ($mode -eq 'beside' -and $staged) { Send-Json $ctx @{ ok = $false; error = '끌어다 놓은 파일은 원본 옆에 저장할 수 없습니다. 저장 위치를 바꿔 주세요.' } 400; break }
+                    $plan = Plan-Items $list $mode ([string]$body.outFolder) ([bool]$body.overwrite)
                     if ($plan.items.Count -eq 0) { Send-Json $ctx @{ ok = $false; error = '변환할 파일이 없습니다.' } 400; break }
                     $outDir = if ($mode -eq 'beside') { '' } else { $plan.outRoot }
                     Begin-Job $plan.items $outDir
@@ -379,8 +469,13 @@ try {
                 '/api/job' { Reap-Worker; Send-Json $ctx @{ ok = $true; job = (Job-View) } }
                 '/api/stop' { $S.stop = $true; Send-Json $ctx @{ ok = $true } }
                 '/api/open' {
-                    $target = [string]$body.path
-                    if (-not (Test-Allowed $target) -or -not (Test-Path -LiteralPath $target)) { Send-Json $ctx @{ ok = $false; error = '열 수 없는 위치입니다.' } 403; break }
+                    # 결과 폴더 열기: 화면이 경로를 보내지 않고, 도우미가 아는 마지막 작업의 저장 위치만 연다
+                    $target = $null; $j = $S.job
+                    if ($j) {
+                        if ($j.outDir) { $target = $j.outDir }
+                        else { $first = @($j.items | Where-Object { $_.status -eq '완료' -or $_.status -eq '건너뜀' }) | Select-Object -First 1; if ($first) { $target = $first.dstDir } }
+                    }
+                    if (-not $target -or -not (Test-Path -LiteralPath $target)) { Send-Json $ctx @{ ok = $false; error = '열 결과 폴더가 없습니다.' } 404; break }
                     Start-Process explorer.exe -ArgumentList ('"' + $target + '"'); Send-Json $ctx @{ ok = $true }
                 }
                 '/api/quit' { Send-Json $ctx @{ ok = $true }; if (-not (Job-Running)) { $listener.Stop() } }
@@ -391,4 +486,5 @@ try {
 } finally {
     try { $listener.Close() } catch {}
     try { Remove-Item -LiteralPath $SESS_FILE -Force -ErrorAction SilentlyContinue } catch {}
+    try { Clear-Stage } catch {}
 }

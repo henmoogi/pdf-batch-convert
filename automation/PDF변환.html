@@ -29,10 +29,22 @@
   .path { font-family:Consolas,"Malgun Gothic",monospace; font-size:13px; color:var(--muted); word-break:break-all; }
   .path b { color:var(--text); font-weight:600; }
   label { display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
+  label.off { opacity:.5; cursor:default; }
   .opts label { display:flex; margin:4px 0; }
   .hint { color:var(--muted); font-size:13px; }
   .msg { color:var(--warn); font-size:14px; margin-top:6px; }
   .err { color:var(--err); }
+  .drop { border:2px dashed var(--line); border-radius:10px; padding:14px 16px; transition:border-color .15s, background .15s; }
+  .drop.over { border-color:var(--accent); background:var(--accent-soft); }
+  .drop .big { font-size:14px; color:var(--muted); }
+  .pick { position:relative; }
+  .menu { position:absolute; top:calc(100% + 4px); left:0; z-index:5; min-width:230px; display:flex; flex-direction:column; padding:4px;
+          background:var(--card); border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.14); }
+  .menu button { border:none; text-align:left; padding:8px 12px; border-radius:6px; }
+  .menu button:hover { background:var(--accent-soft); }
+  .menu small { display:block; color:var(--muted); font-size:12px; }
+  button.x { border:none; background:none; padding:0 6px; color:var(--muted); font-size:16px; line-height:1; }
+  button.x:hover { color:var(--err); }
   .start { margin-top:18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
   .bar { height:7px; background:var(--line); border-radius:4px; overflow:hidden; margin:10px 0 4px; }
   .bar > div { height:100%; width:0; background:var(--accent); transition:width .25s; }
@@ -42,8 +54,9 @@
   td.name { word-break:break-all; }
   td.num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
   td.st { white-space:nowrap; }
-  .st-완료 { color:var(--ok); } .st-실패 { color:var(--err); font-weight:600; } .st-건너뜀, .st-취소 { color:var(--muted); } .st-변환 { color:var(--accent); font-weight:600; }
+  .st-완료, .st-준비 { color:var(--ok); } .st-실패, .st-오류 { color:var(--err); font-weight:600; } .st-건너뜀, .st-취소 { color:var(--muted); } .st-변환, .st-받는 { color:var(--accent); font-weight:600; }
   .tablewrap { max-height:420px; overflow:auto; }
+  #listBox .tablewrap { max-height:300px; }
   .hidden { display:none; }
   details { margin-top:14px; }
   summary { cursor:pointer; font-weight:600; }
@@ -58,7 +71,7 @@
 <body>
 <main>
   <h1>PDF 일괄 변환</h1>
-  <p class="sub">한글·워드·파워포인트 문서를 PDF로 한 번에 바꿉니다. 이 PC에 설치된 한글·오피스로 변환하며, 파일은 PC 밖으로 나가지 않습니다.</p>
+  <p class="sub">한글·워드·파워포인트 문서를 PDF로 한 번에 바꿉니다. 문서를 하나씩 열지 않아도 되고, 이 PC에 설치된 한글·오피스로 변환하며, 파일은 PC 밖으로 나가지 않습니다.</p>
   <div id="banner" class="banner hidden"></div>
 
   <section class="card">
@@ -68,15 +81,27 @@
   </section>
 
   <section class="card">
-    <h2>① 변환할 폴더</h2>
-    <div class="row">
-      <button type="button" id="btnPick">폴더 고르기</button>
-      <label><input type="checkbox" id="chkRec"> 하위 폴더까지 포함</label>
+    <h2>① 변환할 문서</h2>
+    <div class="drop" id="dropZone">
+      <div class="row">
+        <div class="pick">
+          <button type="button" id="btnPick" aria-haspopup="true" aria-expanded="false">선택 ▾</button>
+          <div class="menu hidden" id="pickMenu" role="menu">
+            <button type="button" id="btnPickFolder" role="menuitem">폴더 선택<small>폴더 안의 문서를 모두</small></button>
+            <button type="button" id="btnPickFiles" role="menuitem">파일 선택<small>Ctrl·Shift를 누른 채 여러 개 고르기</small></button>
+          </div>
+        </div>
+        <span class="big">또는 탐색기에서 파일이나 폴더를 이 상자로 끌어다 놓으세요 (여러 개 가능)</span>
+      </div>
     </div>
-    <p class="path" id="inPath">아직 고르지 않음</p>
-    <div id="scanBox" class="hidden">
-      <div class="row"><b id="scanSum"></b><button type="button" id="btnList">목록 보기</button></div>
-      <div class="tablewrap hidden" id="listWrap"><table><thead><tr><th>파일</th><th>종류</th><th>크기</th></tr></thead><tbody id="listRows"></tbody></table></div>
+    <div class="row" style="margin-top:8px">
+      <label><input type="checkbox" id="chkRec"> 선택한 폴더의 하위 폴더까지 포함</label>
+      <span class="hint">(끌어다 놓은 폴더는 하위 폴더까지 모두 넣습니다)</span>
+    </div>
+    <p class="path" id="emptyNote">아직 고르지 않음</p>
+    <div id="listBox" class="hidden">
+      <div class="row" style="margin-top:8px"><b id="sum"></b><button type="button" id="btnClear">목록 비우기</button></div>
+      <div class="tablewrap"><table><thead><tr><th>파일</th><th>종류</th><th>크기</th><th>상태</th><th></th></tr></thead><tbody id="listRows"></tbody></table></div>
     </div>
   </section>
 
@@ -84,7 +109,7 @@
     <h2>② 저장 위치</h2>
     <div class="opts">
       <label><input type="radio" name="out" value="downloads" checked> 다운로드 폴더 <span class="hint" id="dlHint">(실행할 때마다 'PDF변환_날짜_시각' 새 폴더에 모읍니다)</span></label>
-      <label><input type="radio" name="out" value="beside"> 원본 문서 옆</label>
+      <label id="besideLabel"><input type="radio" name="out" value="beside"> 원본 문서 옆 <span class="hint" id="besideHint" hidden>(끌어다 놓은 파일은 원래 위치를 알 수 없어 고를 수 없습니다)</span></label>
       <label><input type="radio" name="out" value="folder"> 다른 폴더 <button type="button" id="btnOut">고르기</button> <span class="path" id="outPath">아직 고르지 않음</span></label>
       <label><input type="checkbox" id="chkOver"> 같은 이름의 PDF가 이미 있으면 덮어쓰기 <span class="hint">(끄면 건너뜀)</span></label>
     </div>
@@ -92,7 +117,7 @@
 
   <div class="start">
     <button type="button" class="primary" id="btnStart" disabled>변환 시작</button>
-    <span class="hint" id="startHint">먼저 변환할 폴더를 고르세요.</span>
+    <span class="hint" id="startHint">먼저 변환할 문서를 선택하거나 끌어다 놓으세요.</span>
   </div>
   <div class="msg" id="msg" hidden></div>
 
@@ -111,12 +136,14 @@
   <details class="card">
     <summary>도움말</summary>
     <ul>
-      <li><b>변환 방식</b>: 한글 문서는 한글의 'PDF로 저장', 워드·파워포인트는 오피스의 'PDF/XPS 문서 만들기'로 바꿉니다. 원래 프로그램으로 저장하는 것과 같아 글꼴·표·그림이 그대로 유지됩니다.</li>
+      <li><b>문서 고르기</b>: [선택]에서 폴더나 파일(여러 개)을 고르거나, 탐색기에서 파일·폴더를 이 화면으로 끌어다 놓습니다. 여러 번 고르면 목록에 계속 더해지고, 빼고 싶은 문서는 줄 끝의 ✕를 누릅니다.</li>
+      <li><b>끌어다 놓은 파일</b>: 브라우저는 끌어다 놓은 파일의 원래 위치를 알려 주지 않아, 도우미 전용 임시 폴더에 사본을 받아 변환합니다. 그래서 '원본 문서 옆'에는 저장할 수 없습니다. 사본은 [목록 비우기]를 누르거나 도우미가 꺼질 때 지우며, 원본은 건드리지 않습니다.</li>
+      <li><b>변환 방식</b>: 한글 문서는 한글의 PDF 기능, 워드·파워포인트는 오피스의 'PDF/XPS 문서 만들기'로 바꿉니다. 원래 프로그램으로 저장하는 것과 같아 글꼴·표·그림이 그대로 유지됩니다.</li>
       <li><b>필요한 프로그램</b>: 한글 문서는 한컴오피스 한글, 워드·파워포인트 문서는 마이크로소프트 오피스가 설치돼 있어야 합니다. 없는 종류는 실패로 표시됩니다.</li>
       <li><b>한글 '보안 승인' 창</b>: 한글은 자동 변환 때 문서마다 '접근 허용' 창을 띄울 수 있습니다. 한컴이 배포하는 보안 모듈(FilePathCheckerModule)을 등록하면 뜨지 않습니다. 등록하지 않았다면 창이 뜰 때마다 [모두 허용]을 눌러 주세요.</li>
       <li><b>'게시 중' 창</b>: 워드·파워포인트가 PDF를 만들 때 잠깐 뜨는 진행 창은 오피스 자체 동작입니다. 닫지 말고 그대로 두세요.</li>
       <li><b>암호 문서·배포용 문서</b>: 암호가 걸린 문서는 열 수 없어 실패로 표시됩니다. 저장이 잠긴 한글 배포용 문서는 인쇄 방식으로 PDF를 만들어 봅니다.</li>
-      <li><b>이름이 같은 문서</b>: 같은 폴더의 '계약서.hwp'와 '계약서.docx'처럼 이름이 겹치면 '계약서_hwp.pdf', '계약서_docx.pdf'로 나눠 저장합니다.</li>
+      <li><b>이름이 같은 문서</b>: '계약서.hwp'와 '계약서.docx'처럼 이름이 겹치면 '계약서_hwp.pdf', '계약서_docx.pdf'로, 다른 곳에서 고른 같은 이름의 문서는 '_2'를 붙여 나눠 저장합니다.</li>
       <li><b>오래 걸리는 파일</b>: 한 파일이 2분 넘게 응답이 없으면 실패로 표시하고 다음 파일로 넘어갑니다. 끝난 뒤 [실패한 것만 다시]를 눌러 보세요.</li>
       <li>변환 중에는 이 화면을 닫지 마세요. 화면을 닫아도 도우미는 30분 동안 쓰지 않으면 저절로 꺼집니다.</li>
     </ul>
@@ -130,12 +157,20 @@
 <script>
 (function () {
   "use strict";
+  const UI_VERSION = "2026.10.07";   // 도우미(PDF변환_도우미.ps1)의 $VERSION과 같아야 한다
   const $ = (id) => document.getElementById(id);
   const KIND = { hwp: "한글", word: "워드", ppt: "파워포인트" };
+  const EXT = { hwp: "hwp", hwpx: "hwp", doc: "word", docx: "word", ppt: "ppt", pptx: "ppt" };
   const qs = new URLSearchParams(location.search);
   let token = qs.get("t") || sessionStorage.getItem("pdfconv.t") || "";
   if (qs.get("t")) { sessionStorage.setItem("pdfconv.t", token); history.replaceState(null, "", "/"); }
-  let inFolder = "", outFolder = "", scanned = [], polling = null, lastOutDir = "";
+  let outFolder = "", polling = null, running = false;
+
+  // 목록: roots = 고른 묶음(폴더 선택·파일 선택·끌어다 놓은 폴더/파일), items = 변환할 문서
+  //   root.type: folder(선택한 폴더) · files(선택한 파일) · dropdir(끌어다 놓은 폴더) · dropfiles(끌어다 놓은 파일)
+  //   item.state: ok(준비) · up(받는 중) · err(오류) / item.drop: 끌어다 놓은 것(사본으로 변환)
+  let roots = [], items = [], seq = 0, dropGroup = 0;
+  const upQueue = [];
 
   async function api(path, body) {
     let r;
@@ -153,11 +188,14 @@
   function say(t, bad) { const m = $("msg"); m.textContent = t || ""; m.hidden = !t; m.classList.toggle("err", !!bad); }
   const fmtSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const kindOf = (name) => { const m = /\.([^.\\/]+)$/.exec(name); return m ? EXT[m[1].toLowerCase()] : undefined; };
+  const isDoc = (name) => !!kindOf(name) && !/(^|[\\/])~\$[^\\/]*$/.test(name);
 
   async function health() {
     const h = await api("health");
     if (!h.ok) return;
     $("ver").textContent = h.version;
+    if (h.version !== UI_VERSION) banner("이전 버전 도우미가 아직 켜져 있습니다. 이 화면을 닫고 실행 아이콘(01 PDF변환_실행)으로 다시 열어 주세요. 변환 중이었다면 끝난 뒤에 다시 여세요.");
     const chip = (ok, name) => `<span class="chip ${ok ? "ok" : "no"}">${ok ? "✔" : "✖"} ${name}</span>`;
     $("chips").innerHTML = chip(h.apps.hwp, "한글") + chip(h.apps.word, "워드") + chip(h.apps.ppt, "파워포인트") +
       (h.apps.hwp ? `<span class="chip ${h.hwpModule ? "ok" : "warn"}">${h.hwpModule ? "✔ 한글 보안 모듈 등록됨" : "! 한글 보안 모듈 없음"}</span>` : "");
@@ -166,38 +204,211 @@
     if (h.running) { $("jobBox").classList.remove("hidden"); poll(); }
   }
 
-  async function scan() {
-    if (!inFolder) return;
-    say("");
-    const r = await api("scan", { folder: inFolder, recursive: $("chkRec").checked });
-    if (!r.ok) { say(r.error, true); return; }
-    scanned = r.files || [];
+  // ---------- 목록 ----------
+  const isFolderRoot = (r) => r.type === "folder" || r.type === "dropdir";
+  function liveRoots() { const used = new Set(items.map((i) => i.rootId)); return roots.filter((r) => used.has(r.id)); }
+  // 결과 폴더 안 위치: 폴더 하나만 골랐으면 그 폴더 안 구조 그대로, 여러 묶음이면 폴더 이름부터
+  function finalRel(it) {
+    const r = roots.find((x) => x.id === it.rootId);
+    const live = liveRoots();
+    if (live.length === 1 && isFolderRoot(live[0])) return it.sub;
+    return isFolderRoot(r) ? r.name + "\\" + it.sub : it.sub;
+  }
+  function addItem(rootId, sub, extra) {
+    const key = extra.key.toLowerCase();
+    if (items.some((i) => i.key === key)) return false;
+    items.push(Object.assign({ id: ++seq, rootId, sub, state: "ok", err: "" }, extra, { key }));
+    return true;
+  }
+  let renderPending = false;
+  function render() {
+    if (renderPending) return;
+    renderPending = true;
+    requestAnimationFrame(() => { renderPending = false; renderNow(); });
+  }
+  function renderNow() {
     const c = { hwp: 0, word: 0, ppt: 0 };
-    scanned.forEach((f) => c[f.kind]++);
-    $("scanBox").classList.remove("hidden");
-    $("scanSum").textContent = scanned.length
-      ? `총 ${scanned.length}개 - 한글 ${c.hwp} · 워드 ${c.word} · 파워포인트 ${c.ppt}`
-      : "변환할 문서(한글·워드·파워포인트)가 없습니다." + ($("chkRec").checked ? "" : " 하위 폴더에 있다면 '하위 폴더까지 포함'을 체크하세요.");
-    $("listRows").innerHTML = scanned.slice(0, 1000).map((f) => `<tr><td class="name">${esc(f.rel)}</td><td>${KIND[f.kind]}</td><td class="num">${fmtSize(f.size)}</td></tr>`).join("");
-    $("btnList").hidden = !scanned.length;
+    let up = 0, bad = 0;
+    items.forEach((i) => { c[i.kind]++; if (i.state === "up") up++; if (i.state === "err") bad++; });
+    $("emptyNote").hidden = items.length > 0;
+    $("listBox").classList.toggle("hidden", !items.length);
+    $("sum").textContent = `총 ${items.length}개 - 한글 ${c.hwp} · 워드 ${c.word} · 파워포인트 ${c.ppt}` + (up ? ` · 받는 중 ${up}` : "") + (bad ? ` · 오류 ${bad}` : "");
+    $("listRows").innerHTML = items.slice(0, 2000).map((i) => {
+      const st = i.state === "up" ? ["st-받는", "받는 중…"] : i.state === "err" ? ["st-오류", "오류: " + i.err] : ["st-준비", "준비"];
+      return `<tr><td class="name">${esc(finalRel(i))}</td><td>${KIND[i.kind]}</td><td class="num">${fmtSize(i.size)}</td>` +
+        `<td class="st ${st[0]}">${esc(st[1])}</td><td><button type="button" class="x" data-id="${i.id}" title="목록에서 빼기" ${running ? "disabled" : ""}>✕</button></td></tr>`;
+    }).join("") + (items.length > 2000 ? `<tr><td colspan="5" class="hint">… 외 ${items.length - 2000}개</td></tr>` : "");
+    $("btnClear").disabled = running;
+    const hasDrop = items.some((i) => i.drop);
+    const beside = document.querySelector("input[value=beside]");
+    beside.disabled = hasDrop; $("besideLabel").classList.toggle("off", hasDrop); $("besideHint").hidden = !hasDrop;
+    if (hasDrop && beside.checked) document.querySelector("input[value=downloads]").checked = true;
     refreshStart();
   }
   function outMode() { return document.querySelector("input[name=out]:checked").value; }
   function refreshStart() {
+    const ready = items.filter((i) => i.state === "ok").length;
     let hint = "";
-    if (!inFolder) hint = "먼저 변환할 폴더를 고르세요.";
-    else if (!scanned.length) hint = "변환할 문서가 없습니다.";
+    if (!items.length) hint = "먼저 변환할 문서를 선택하거나 끌어다 놓으세요.";
+    else if (items.some((i) => i.state === "up")) hint = "끌어다 놓은 파일을 받는 중입니다…";
+    else if (!ready) hint = "변환할 수 있는 문서가 없습니다.";
     else if (outMode() === "folder" && !outFolder) hint = "저장할 폴더를 고르세요.";
-    $("btnStart").disabled = !!hint;
-    $("startHint").textContent = hint || `${scanned.length}개 문서를 PDF로 바꿉니다.`;
+    $("btnStart").disabled = !!hint || running;
+    const bad = items.length - ready;
+    $("startHint").textContent = hint || `${ready}개 문서를 PDF로 바꿉니다.` + (bad ? ` (오류 ${bad}개는 빼고)` : "");
   }
 
-  $("btnPick").onclick = async () => {
-    say("폴더 선택 창이 열렸습니다. 다른 창 뒤에 가려져 있으면 작업 표시줄에서 찾아 주세요.");
-    const r = await api("pick", { purpose: "input", start: inFolder });
-    say("");
-    if (r.ok && r.path) { inFolder = r.path; $("inPath").innerHTML = "<b>" + esc(r.path) + "</b>"; scan(); }
+  // 선택한 폴더: 도우미가 폴더 안 문서 목록을 읽는다(하위 폴더 포함 여부는 체크 상자)
+  async function scanFolder(root) {
+    const r = await api("scan", { folder: root.path, recursive: $("chkRec").checked });
+    if (!r.ok) { say(r.error, true); return -1; }
+    items = items.filter((i) => i.rootId !== root.id);
+    let n = 0;
+    for (const f of r.files || []) if (addItem(root.id, f.rel, { key: "p:" + f.path, path: f.path, kind: f.kind, size: f.size })) n++;
+    return n;
+  }
+  async function addFolder(path) {
+    let root = roots.find((r) => r.type === "folder" && r.path.toLowerCase() === path.toLowerCase());
+    if (!root) { root = { id: ++seq, type: "folder", name: path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path, path }; roots.push(root); }
+    const n = await scanFolder(root);
+    if (n < 0) { roots = roots.filter((r) => r !== root); render(); return; }
+    say(n ? "" : "고른 폴더에 새로 넣을 문서(한글·워드·파워포인트)가 없습니다." + ($("chkRec").checked ? "" : " 하위 폴더에 있다면 '하위 폴더까지 포함'을 체크하세요."));
+    render();
+  }
+  function closeMenu() { $("pickMenu").classList.add("hidden"); $("btnPick").setAttribute("aria-expanded", "false"); }
+  $("btnPick").onclick = (e) => {
+    e.stopPropagation();
+    const open = $("pickMenu").classList.toggle("hidden") === false;
+    $("btnPick").setAttribute("aria-expanded", String(open));
   };
+  document.addEventListener("click", (e) => { if (!$("pickMenu").contains(e.target)) closeMenu(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+  $("btnPickFolder").onclick = async () => {
+    closeMenu();
+    say("폴더 선택 창이 열렸습니다. 다른 창 뒤에 가려져 있으면 작업 표시줄에서 찾아 주세요.");
+    const r = await api("pick", { purpose: "input", mode: "folder" });
+    say("");
+    if (r.ok && r.path) await addFolder(r.path);
+  };
+  $("btnPickFiles").onclick = async () => {
+    closeMenu();
+    say("파일 선택 창이 열렸습니다. 다른 창 뒤에 가려져 있으면 작업 표시줄에서 찾아 주세요.");
+    const r = await api("pick", { purpose: "input", mode: "files" });
+    say("");
+    if (!r.ok || r.cancel) { if (!r.ok) say(r.error, true); return; }
+    const root = { id: ++seq, type: "files", name: "선택한 파일" };
+    roots.push(root);
+    let n = 0;
+    for (const f of r.files || []) if (addItem(root.id, f.name, { key: "p:" + f.path, path: f.path, kind: f.kind, size: f.size })) n++;
+    if (r.skipped) say(`문서가 아닌 파일 ${r.skipped}개는 뺐습니다.`);
+    else if (!n && (r.files || []).length) say("이미 목록에 있는 문서입니다.");
+    render();
+  };
+  $("chkRec").onchange = async () => {
+    for (const r of roots.filter((x) => x.type === "folder")) await scanFolder(r);
+    render();
+  };
+  $("listRows").addEventListener("click", (e) => {
+    const b = e.target.closest("button.x");
+    if (!b || running) return;
+    items = items.filter((i) => i.id !== Number(b.dataset.id));
+    render();
+  });
+  $("btnClear").onclick = async () => {
+    if (running) return;
+    upQueue.length = 0;
+    items = []; roots = [];
+    await api("discard");   // 끌어다 놓아 받은 사본 지우기
+    $("jobBox").classList.add("hidden");
+    say(""); render();
+  };
+
+  // ---------- 끌어다 놓기 ----------
+  // 브라우저는 놓은 파일의 원래 위치를 알려 주지 않으므로 내용을 도우미에 보내 사본으로 변환한다
+  function addDropped(groups) {
+    const g = ++dropGroup;
+    let n = 0, skipped = 0;
+    for (const grp of groups) {
+      const root = { id: ++seq, type: grp.type, name: grp.name || "끌어다 놓은 파일" };
+      roots.push(root);
+      for (const f of grp.files) {
+        if (!isDoc(f.sub)) { skipped++; continue; }
+        const upRel = grp.type === "dropdir" ? root.name + "\\" + f.sub : f.sub;
+        const ok = addItem(root.id, f.sub, { key: "d:" + upRel + ":" + f.file.size + ":" + f.file.lastModified, kind: kindOf(f.sub), size: f.file.size,
+          drop: true, state: "up", file: f.file, upRel, group: g });
+        if (ok) { n++; upQueue.push(items[items.length - 1]); }
+      }
+    }
+    say(n ? `문서 ${n}개를 목록에 넣었습니다.` + (skipped ? ` (문서가 아닌 파일 ${skipped}개는 뺐습니다)` : "")
+      : skipped ? "끌어다 놓은 것 중에 한글·워드·파워포인트 문서가 없습니다." : "이미 목록에 있는 문서입니다.");
+    render();
+    pumpUploads();
+  }
+  let pumping = false;
+  async function pumpUploads() {
+    if (pumping) return;
+    pumping = true;
+    try {
+      while (upQueue.length) {
+        const it = upQueue.shift();
+        if (!items.includes(it)) continue;   // 받기 전에 목록에서 뺀 것
+        try {
+          const r = await fetch("/api/upload", { method: "POST", body: it.file,
+            headers: { "Content-Type": "application/octet-stream", "X-Token": token, "X-Rel": encodeURIComponent(it.upRel), "X-Group": String(it.group) } });
+          const j = await r.json().catch(() => ({ ok: false, error: "응답을 읽지 못했습니다." }));
+          if (j.ok) { it.path = j.path; it.state = "ok"; } else { it.state = "err"; it.err = j.error || "받지 못했습니다."; }
+        } catch (e) { it.state = "err"; it.err = "파일을 읽지 못했습니다. 다시 끌어다 놓아 주세요."; }
+        it.file = null;
+        render();
+      }
+    } finally { pumping = false; }
+  }
+  const entryFile = (fe) => new Promise((res, rej) => fe.file(res, rej));
+  function readBatch(reader) { return new Promise((res, rej) => reader.readEntries(res, rej)); }
+  async function walkDir(dir, prefix, out) {
+    const reader = dir.createReader();
+    for (;;) {
+      const batch = await readBatch(reader);   // 한 번에 100개씩 나오므로 빈 배열이 나올 때까지 읽는다
+      if (!batch.length) break;
+      for (const e of batch) {
+        const sub = prefix ? prefix + "\\" + e.name : e.name;
+        if (e.isDirectory) await walkDir(e, sub, out);
+        else if (e.isFile && isDoc(e.name)) out.push({ sub, file: await entryFile(e) });
+        else if (e.isFile) out.push({ sub, file: { size: 0, lastModified: 0 } });   // 문서가 아닌 파일(개수만 셈)
+      }
+    }
+  }
+  async function readDrop(dt) {
+    const entries = [];
+    for (const it of dt.items || []) {
+      if (it.kind !== "file") continue;
+      const e = it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;   // 놓은 순간에 꺼내 둬야 한다
+      if (e) entries.push(e); else { const f = it.getAsFile(); if (f) entries.push({ plainFile: f }); }
+    }
+    const groups = [], loose = [];
+    for (const e of entries) {
+      if (e.plainFile) loose.push({ sub: e.plainFile.name, file: e.plainFile });
+      else if (e.isDirectory) { const files = []; await walkDir(e, "", files); groups.push({ type: "dropdir", name: e.name, files }); }
+      else if (e.isFile) loose.push({ sub: e.name, file: isDoc(e.name) ? await entryFile(e) : { size: 0, lastModified: 0 } });
+    }
+    if (loose.length) groups.unshift({ type: "dropfiles", name: "끌어다 놓은 파일", files: loose });
+    return groups;
+  }
+  const zone = $("dropZone");
+  let dragDepth = 0;
+  const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+  window.addEventListener("dragenter", (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; zone.classList.add("over"); });
+  window.addEventListener("dragover", (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
+  window.addEventListener("dragleave", (e) => { if (!hasFiles(e)) return; if (--dragDepth <= 0) { dragDepth = 0; zone.classList.remove("over"); } });
+  window.addEventListener("drop", async (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();   // 브라우저가 파일을 직접 열지 않게(화면 어디에 놓아도 목록에 넣는다)
+    dragDepth = 0; zone.classList.remove("over");
+    say("끌어다 놓은 것을 읽는 중…");
+    try { addDropped(await readDrop(e.dataTransfer)); } catch (err) { say("끌어다 놓은 것을 읽지 못했습니다: " + err.message, true); }
+  });
+
+  // ---------- 저장 위치·변환 ----------
   $("btnOut").onclick = async () => {
     say("폴더 선택 창이 열렸습니다.");
     const r = await api("pick", { purpose: "output", start: outFolder });
@@ -205,16 +416,14 @@
     if (r.ok && r.path) { outFolder = r.path; $("outPath").innerHTML = "<b>" + esc(r.path) + "</b>"; document.querySelector("input[value=folder]").checked = true; }
     refreshStart();
   };
-  $("chkRec").onchange = scan;
   document.querySelectorAll("input[name=out]").forEach((el) => el.onchange = refreshStart);
-  $("btnList").onclick = () => $("listWrap").classList.toggle("hidden");
 
   async function start(retry) {
     say("");
-    const body = retry ? { retry: true } : { folder: inFolder, recursive: $("chkRec").checked, outMode: outMode(), outFolder, overwrite: $("chkOver").checked };
+    const ready = items.filter((i) => i.state === "ok");
+    const body = retry ? { retry: true } : { items: ready.map((i) => ({ path: i.path, rel: finalRel(i) })), outMode: outMode(), outFolder, overwrite: $("chkOver").checked };
     const r = await api("start", body);
     if (!r.ok) { say(r.error, true); return; }
-    lastOutDir = r.outDir || "";
     $("jobBox").classList.remove("hidden");
     $("jobBox").scrollIntoView({ behavior: "smooth", block: "start" });
     poll();
@@ -223,44 +432,46 @@
   $("btnRetry").onclick = () => start(true);
   $("btnStop").onclick = async () => { await api("stop"); $("btnStop").disabled = true; $("jobTitle").textContent = "멈추는 중(지금 파일까지 마치고 멈춥니다)"; };
   $("btnOpen").onclick = async () => {
-    const r = await api("open", { path: lastOutDir || inFolder });
+    const r = await api("open");
     if (!r.ok) say(r.error, true);
   };
 
   function poll() {
     clearTimeout(polling);
     api("job").then((r) => {
-      if (!r.ok || !r.job || r.job.state === "none") return;
-      render(r.job);
+      if (!r.ok || !r.job || r.job.state === "none") { if (running) { running = false; render(); } return; }
+      renderJob(r.job);
       if (r.job.state === "running") polling = setTimeout(poll, 700);
     }).catch(() => {});
   }
-  function render(j) {
+  function renderJob(j) {
     const c = j.counts || {};
     const done = (c["완료"] || 0) + (c["실패"] || 0) + (c["건너뜀"] || 0) + (c["취소"] || 0);
     $("barFill").style.width = (j.total ? Math.round(done / j.total * 100) : 0) + "%";
     $("jobCounts").textContent = `완료 ${c["완료"] || 0} · 실패 ${c["실패"] || 0} · 건너뜀 ${c["건너뜀"] || 0}` +
       (c["취소"] ? ` · 취소 ${c["취소"]}` : "") + ` · 남음 ${(c["대기"] || 0) + (c["변환 중"] || 0)} (전체 ${j.total})` +
       (j.outDir ? ` · 저장 위치: ${j.outDir}` : " · 저장 위치: 원본 문서 옆");
-    lastOutDir = j.outDir || lastOutDir;
-    const running = j.state === "running";
+    const wasRunning = running;
+    running = j.state === "running";
     $("jobTitle").textContent = running ? "변환 중" : (j.state === "stopped" ? "멈춤" : "변환 끝");
     $("btnStop").classList.toggle("hidden", !running); $("btnStop").disabled = false;
     $("btnOpen").classList.toggle("hidden", running);
     $("btnRetry").classList.toggle("hidden", running || !((c["실패"] || 0) + (c["취소"] || 0)));
-    $("btnStart").disabled = running || $("btnStart").disabled;
     $("jobRows").innerHTML = j.items.map((it) => {
       const cls = it.status === "변환 중" ? "st-변환" : "st-" + it.status;
       return `<tr><td class="name">${esc(it.rel)}</td><td>${KIND[it.kind]}</td><td class="st ${cls}">${esc(it.status)}</td>` +
         `<td class="num">${it.sec != null ? it.sec + "초" : ""}</td><td>${esc(it.msg)}</td></tr>`;
     }).join("");
+    if (wasRunning !== running) render();
     if (!running) { refreshStart(); if (j.error) say("작업 중 오류: " + j.error, true); }
   }
 
-  // 자동 시험용: 폴더 선택 창 없이 폴더를 넣는다(도우미가 -Allow로 미리 허용한 폴더만 통과)
+  // 자동 시험용: 선택 창 없이 폴더를 넣거나(도우미가 -Allow로 미리 허용한 폴더만 통과), 끌어다 놓기를 흉내 낸다
   window.__pdfconvTest = {
-    setIn: (p) => { inFolder = p; $("inPath").innerHTML = "<b>" + esc(p) + "</b>"; return scan(); },
+    setIn: (p) => addFolder(p),
     setOut: (p) => { outFolder = p; $("outPath").innerHTML = "<b>" + esc(p) + "</b>"; refreshStart(); },
+    drop: (groups) => addDropped(groups),
+    state: () => ({ items: items.map((i) => ({ rel: finalRel(i), state: i.state, err: i.err, drop: !!i.drop, path: i.path })), roots: roots.length }),
   };
   if (!token) banner("이 화면은 실행 아이콘(01 PDF변환_실행)으로 열어야 합니다.");
   else health().catch(() => {});

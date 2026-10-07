@@ -15,6 +15,13 @@ function Get-Live {
 }
 
 $s = Get-Live
+# 새 버전으로 바꾼 뒤 예전 도우미가 아직 떠 있으면 끄고 새로 띄운다(변환 중이면 끝날 때까지 그대로 둔다)
+$want = [regex]::Match([IO.File]::ReadAllText($helper, [Text.Encoding]::UTF8), "\`$VERSION = '([^']+)'").Groups[1].Value
+if ($s -and $want -and $s.version -ne $want) {
+    try { [void](Invoke-RestMethod -Method Post -Uri ("http://127.0.0.1:{0}/api/quit" -f $s.port) -Headers @{ 'X-Token' = $s.token } -ContentType 'application/json' -Body '{}' -TimeoutSec 3) } catch {}
+    for ($i = 0; $i -lt 20 -and (Get-Live); $i++) { Start-Sleep -Milliseconds 300 }
+    $s = Get-Live
+}
 if (-not $s) {
     $ps = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     Start-Process -FilePath $ps -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-WindowStyle', 'Hidden', '-File', ('"' + $helper + '"'))
